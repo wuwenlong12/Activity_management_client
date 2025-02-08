@@ -11,8 +11,12 @@ export interface ResponseGetActivityById extends ResponseBase {
 
 export type PostActivityBody = {
   id?: string;
+  schoolId: string;
   title: string;
-  time: Date;
+  startTime: Date;      // 活动开始时间
+  endTime: Date;        // 活动结束时间
+  signUpStartTime: Date;  // 报名开始时间
+  signUpEndTime: Date;    // 报名结束时间
   location: location;
   participantLimit: string;
   description: string;
@@ -20,26 +24,35 @@ export type PostActivityBody = {
   tags: string[];
   notices: string[];
   participants?: string[];
-
 };
 
 export interface Activity {
   id: string;
-  status:  "pending" |'upcoming' | "proceed"| "cancelled" |  'over'   ; // 报名状态 报名中/即将开始/进行中/取消/结束
   title: string;
-  image: string;
-  description: string;
-  notices: string[];
+  startTime: string;      // 活动开始时间
+  endTime: string;        // 活动结束时间
+  signUpStartTime: string;  // 报名开始时间
+  signUpEndTime: string;    // 报名结束时间
+  signInRange: number;
   date: string;
   location: location;
-  participants: Participant[];  //参与者
-  participants_count: number;
-  isCreator: boolean;
-  isJoined: boolean;
+  participantLimit: string;
+  description: string;
+  image: string;
   tags: tag[];
-  organizer: Organizer;
+  notices: string[];
+  participants: Participant[];
+  participants_count: number;
+  organizer: {
+    id: string;
+    name: string;
+    avatar: string;
+    verified: boolean;
+  };
+  status: "notStart" | "pending" | "upcoming" | "proceed" | "cancelled" | "over";
+  isCreator: boolean;
+  participationStatus: "none" | "pending" | "confirmed" | "cancelled" | "rejected";
 }
-
 
 export interface Participant {
   id: string;
@@ -76,9 +89,12 @@ export type requestActivity = {
 }
 
 export type requestSearchActivity = {
+  schoolId?: string;
   search?: string;
   startDate?: string;
   endDate?: string;
+  signUpStartDate?: string;
+  signUpEndDate?: string;
   tags?: string[];
   page?: string;
   limit?: string;

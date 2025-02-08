@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,25 +12,27 @@ import {
   Modal,
   Alert,
   ListRenderItem,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import type { BarcodeScanningResult } from 'expo-camera';
 import { useNavigation } from '@react-navigation/native';
-import { getActivity } from '../api/activity';
+import {  getActivities } from '../api/activity';
 import dayjs from 'dayjs';
 import { Activity } from '../api/activity/type';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { school } from '../api/school/type';
 import { getSchoolList } from '../api/school';
+import { useAppDispatch, useAppSelector } from '../store';
+import { setSelectedSchool, setSchools } from '../store/slices/schoolSlice';
 
 
 interface QRCodeData {
-  type: 'activity';
-  name: string;
-  id: string;
-  action: 'checkin' | 'checkout';
+  type: 'check';
+  activityId: string;
+  signInRange: number;
 }
 
 const { width } = Dimensions.get('window');
@@ -38,136 +40,117 @@ const COLUMN_WIDTH = (width - 48) / 2; // 两列布局，左右各16padding，�
 
 type NavigationProp = StackNavigationProp<RootStackParamList, 'Home'>;
 
+// 1. 添加状态映射常量
+const STATUS_MAP = {
+  notStart:{ text: '未开始', bgColor: '#9E9E9E' },
+  pending: { text: '报名中', bgColor: '#4CAF50' },
+  upcoming: { text: '即将开始', bgColor: '#FF9800' },
+  proceed: { text: '进行中', bgColor: '#2196F3' },
+  cancelled: { text: '已取消', bgColor: '#F44336' },
+  over: { text: '已结束', bgColor: '#9E9E9E' },
+} as const;
+
+// 1. 添加空状态组件
+const EmptyState = () => (
+  <View style={styles.emptyContainer}>
+    <Image 
+      source={require('../../assets/null.png')} 
+      style={styles.emptyImage}
+    />
+    <Text style={styles.emptyText}>暂无活动</Text>
+    <Text style={styles.emptySubText}>该学校目前还没有发布任何活动</Text>
+  </View>
+);
+
 export const HomeScreen: React.FC = () => {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showSchoolPicker, setShowSchoolPicker] = useState(false);
-  const [schools, setSchools] = useState<school[]>([]);
-  const [selectedSchool, setSelectedSchool] = useState<school | null>(null);
+  const dispatch = useAppDispatch();
+  const { selectedSchool, schools } = useAppSelector(state => state.school);
   const [searchText, setSearchText] = useState<string>('');
   const [showScanner, setShowScanner] = useState<boolean>(false);
   const [permission, requestPermission] = useCameraPermissions();
   const navigation = useNavigation<NavigationProp>();
-
-  // const activities: Activity[] = [
-  //   {
-  //     id: '1',
-  //     title: '篮球友谊赛',
-  //     image: require('../../assets/logo.jpg'),
-  //     date: '3月20日 周三',
-  //     location: '体育馆',
-  //     participants: 24,
-  //     tags: ['体育', '交友'],
-  //     organizer: {
-  //       name: '浙大篮球协会',
-  //       avatar: require('../../assets/logo.jpg'),
-  //       verified: true,
-  //     },
-  //   },
-  //   {
-  //     id: '2',
-  //     title: '校园歌手大赛',
-  //     image: require('../../assets/logo.jpg'),
-  //     date: '3月25日 周一',
-  //     location: '大礼堂',
-  //     participants: 56,
-  //     tags: ['音乐', '比赛'],
-  //     organizer: {
-  //       name: '校园歌手大赛组织者',
-  //       avatar: require('../../assets/logo.jpg'),
-  //       verified: false,
-  //     },
-  //   },
-  //   {
-  //     id: '3',
-  //     title: '校园歌手大赛',
-  //     image: require('../../assets/logo.jpg'),
-  //     date: '3月25日 周一',
-  //     location: '大礼堂',
-  //     participants: 56,
-  //     tags: ['音乐', '比赛'],
-  //     organizer: {
-  //       name: '校园歌手大赛组织者',
-  //       avatar: require('../../assets/logo.jpg'),
-  //       verified: false,
-  //     },
-  //   },
-  //   {
-  //     id: '4',
-  //     title: '校园歌手大赛',
-  //     image: require('../../assets/logo.jpg'),
-  //     date: '3月25日 周一',
-  //     location: '大礼堂',
-  //     participants: 56,
-  //     tags: ['音乐', '比赛'],
-  //     organizer: {
-  //       name: '校园歌手大赛组织者',
-  //       avatar: require('../../assets/logo.jpg'),
-  //       verified: false,
-  //     },
-  //   },
-  //   {
-  //     id: '5',
-  //     title: '校园歌手大赛',
-  //     image: require('../../assets/logo.jpg'),
-  //     date: '3月25日 周一',
-  //     location: '大礼堂',
-  //     participants: 56,
-  //     tags: ['音乐', '比赛'],
-  //     organizer: {
-  //       name: '校园歌手大赛组织者',
-  //       avatar: require('../../assets/logo.jpg'),
-  //       verified: false,
-  //     },
-  //   },
-  //   {
-  //     id: '6',
-  //     title: '校园歌手大赛',
-  //     image: require('../../assets/logo.jpg'),
-  //     date: '3月25日 周一',
-  //     location: '大礼堂',
-  //     participants: 56,
-  //     tags: ['音乐', '比赛'],
-  //     organizer: {
-  //       name: '校园歌手大赛组织者',
-  //       avatar: require('../../assets/logo.jpg'),
-  //       verified: false,
-  //     },
-  //   },
-  //   // 添加更多活动数据...
-  // ];
-
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const PAGE_SIZE = 10;
+  const {user} = useAppSelector(state => state.auth)
+useEffect(()=>{
+  dispatch(setSelectedSchool(user?.school|| schools[0]))
+},[])
   // 移除原来的权限请求代码，使用新的权限hook
   useEffect(() => {
     if (!permission?.granted) {
       requestPermission();
     }
-    const fetchActivities = async () => {
-      const res = await getActivity()
-      if (res.code === 0) {
-        setActivities(res.data.list)
-      }
-    }
+    
+    // 使用分页的fetchActivities进行初始化加载
+    fetchActivities(1, true);
+    
     const fetchSchools = async () => {
       const res = await getSchoolList()
       if (res.code === 0) {
-        setSchools(res.data)
-        setSelectedSchool(res.data[0])
+        dispatch(setSchools(res.data))
       }
     }
-    fetchActivities()
     fetchSchools()
+  }, [dispatch, selectedSchool]);
 
-  }, []);
+  // 获取活动列表
+  const fetchActivities = async (pageNum: number, isRefresh = false) => {
+    try {
+      setLoading(true);
+      const response = await getActivities({
+        page: pageNum.toString(),
+        limit: PAGE_SIZE.toString(),
+        schoolId: selectedSchool?._id,
+      });
+      
+      if (response.code === 0) {  // 添加状态码检查
+        if (isRefresh) {
+          setActivities(response.data.list);
+        } else {
+          setActivities(prev => [...prev, ...response.data.list]);  // 使用函数式更新
+        }
+        
+        setHasMore(response.data.list.length === PAGE_SIZE);
+        setPage(pageNum);
+      }
+    } catch (error) {
+      console.error('获取活动列表失败:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  // 下拉刷新
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchActivities(1, true);
+  }, [selectedSchool]);
+
+  // 上拉加载更多
+  const onEndReached = () => {
+    if (!loading && hasMore) {
+      console.log('Loading more...', page + 1);  // 添加日志便于调试
+      fetchActivities(page + 1);
+    }
+  };
 
   // 处理扫码结果
-
-
   const handleBarCodeScanned = ({ data }: BarcodeScanningResult): void => {
     setShowScanner(false);
+  
     try {
       const qrData: QRCodeData = JSON.parse(data);
-      if (qrData.type === 'activity') {
-        Alert.alert('签到成功', `活动：${qrData.name}`);
+      if (qrData.type === 'check') {
+        navigation.navigate('CheckIn', {
+          activityId: qrData.activityId,
+          signInRange: qrData.signInRange
+        });
       }
     } catch (error) {
       Alert.alert('错误', '无效的二维码');
@@ -182,24 +165,44 @@ export const HomeScreen: React.FC = () => {
       ]}
       onPress={() => navigation.navigate('ActivityDetail', { activityId: item.id })}
     >
+      <View style={{position:'relative'}}>
       <Image 
-        source={   item.image || require('../../assets/logo.jpg') } 
+         source={item.image ? { uri: item.image } : require('../../assets/logo.jpg')} 
         style={styles.activityImage} 
       />
+       <View style={styles.detailRow}>
+            <View style={styles.participantsContainer}>
+              <Text style={styles.participantsText}>{item.participants_count}人参与</Text>
+            </View>
+          </View>
+      </View>
+     
+         
+      {/* 状态标签 */}
+      <View style={styles.statusContainer}>
+        <View style={[
+          styles.statusBadge,
+          { backgroundColor: STATUS_MAP[item.status].bgColor }
+        ]}>
+          <Text style={styles.statusText}>
+            {STATUS_MAP[item.status].text}
+          </Text>
+        </View>
+      </View>
       <View style={styles.tagContainer}>
-
         {item.tags.map((tag, idx) => (
           <View key={tag._id} style={styles.tag}>
             <Text style={styles.tagText}>{tag.name}</Text>
           </View>
         ))}
       </View>
+  
       <View style={styles.activityInfo}>
         <Text style={styles.activityTitle} numberOfLines={2}>{item.title}</Text>
         <View style={styles.organizerContainer}>
          
             <Image 
-              source={item.organizer.avatar || require('../../assets/logo.jpg')} 
+              source={item.organizer.avatar ? { uri:item.organizer.avatar  } : require('../../assets/logo.jpg')} 
               style={styles.organizerAvatar}
             />
          
@@ -211,52 +214,59 @@ export const HomeScreen: React.FC = () => {
           )}
         </View>
         <View style={styles.activityDetails}>
-          <View style={styles.detailRow}>
-            <View style={styles.detailItem}>
-              <Ionicons name="calendar-outline" size={14} color="#FF6B6B" />
-              <Text style={[styles.detailText, styles.dateText]}>{dayjs(item.date).format('YYYY-MM-DD')}</Text>
-            </View>
-            <View style={styles.participantsContainer}>
-              <Text style={styles.participantsText}>{item.participants_count}人参与</Text>
-        
-            </View>
-          </View>
+         
           <View style={styles.detailItem}>
             <Ionicons name="location-outline" size={14} color="#4ECDC4" />
             <Text style={styles.detailText} numberOfLines={1}>{item.location.name}</Text>
           </View>
+          <View style={styles.detailItem}>
+          <Ionicons name="time-outline" size={14} color="red" />
+            <Text style={styles.detailText} numberOfLines={1}>报名截止：{dayjs(item.signUpEndTime).format('MM-DD HH:mm')}</Text>
+          </View>
         </View>
+      
       </View>
     </TouchableOpacity>
   );
 
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <View style={styles.searchContainer}>
+        <TouchableOpacity 
+          style={styles.schoolSelector}
+          onPress={() => setShowSchoolPicker(true)}
+        >
+          <Text style={styles.schoolText}>{selectedSchool?.name}</Text>
+          <Ionicons name="chevron-down" size={20} color="#333" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.searchBar}
+          onPress={() => navigation.navigate('Search')}
+        >
+          <Ionicons name="search" size={20} color="#666" />
+          <Text style={styles.searchPlaceholder}>搜索活动</Text>
+          <TouchableOpacity 
+            style={styles.scanButton}
+            onPress={(e) => {
+              e.stopPropagation(); // 阻止事件冒泡
+              setShowScanner(true);
+            }}
+          >
+            <Ionicons name="scan-outline" size={20} color="#007AFF" />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const handleSchoolSelect = (school: school) => {
+    dispatch(setSelectedSchool(school));
+    setShowSchoolPicker(false);
+  };
+
   return (
     <View style={styles.container}>
-      {/* 顶部搜索栏 */}
-      <View style={styles.header}>
-        <View style={styles.searchContainer}>
-          <TouchableOpacity style={styles.schoolSelector}   onPress={() => setShowSchoolPicker(true)}>
-            <Text style={styles.schoolText}>{selectedSchool?.name}</Text>
-
-            <Ionicons name="chevron-down" size={20} color="#333" />
-          </TouchableOpacity>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={20} color="#666" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="搜索活动"
-              value={searchText}
-              onChangeText={setSearchText}
-            />
-            <TouchableOpacity 
-              style={styles.scanButton}
-              onPress={() => setShowScanner(true)}
-            >
-              <Ionicons name="scan-outline" size={20} color="#007AFF" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+      {renderHeader()}
 
       {/* 扫码界面 */}
       {showScanner && (
@@ -324,7 +334,16 @@ export const HomeScreen: React.FC = () => {
           numColumns={2}
           columnWrapperStyle={styles.columnWrapper}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[
+            styles.listContent,
+            activities.length === 0 && styles.emptyListContent  // 当没有数据时调整样式
+          ]}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.1}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={EmptyState}  // 添加空状态组件
         />
       </View>
          {/* 学校选择器模态框 */}
@@ -351,8 +370,7 @@ export const HomeScreen: React.FC = () => {
                     key={index}
                     style={styles.schoolItem}
                     onPress={() => {
-                      setSelectedSchool(school);
-                      setShowSchoolPicker(false);
+                      handleSchoolSelect(school);
                     }}
                   >
                     <Text style={styles.schoolItemText}>{school.name}</Text>
@@ -408,10 +426,11 @@ const styles = StyleSheet.create({
     height: 32,
     marginLeft: 12,
   },
-  searchInput: {
+  searchPlaceholder: {
     flex: 1,
     marginLeft: 8,
     fontSize: 14,
+    color: '#666',
   },
   content: {
     flex: 1,
@@ -505,6 +524,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   detailRow: {
+    position: 'absolute',
+    bottom:0,
+    right:10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -652,6 +674,63 @@ const styles = StyleSheet.create({
   schoolItemText: {
     fontSize: 16,
     color: '#333',
+  },
+  statusContainer: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 1,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyImage: {
+    width: 200,
+    height: 200,
+    marginBottom: 20,
+    resizeMode: 'contain',
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  emptySubText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  emptyListContent: {
+    flexGrow: 1,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
   },
 });
 

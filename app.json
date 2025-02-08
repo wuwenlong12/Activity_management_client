@@ -15,7 +15,8 @@
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "expo-barcode-scanner"
     ],
     "extra": {
       "amapApiKey": "${EXPO_PUBLIC_AMAP_API_KEY}",

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, CardStyleInterpolators } from '@react-navigation/stack';
 import { BottomTabNavigator } from './BottomTabNavigator';
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
@@ -17,31 +17,70 @@ import VerifyScreen from '../screens/VerifyScreen';
 import ExploreScreen from '../screens/ExploreScreen';
 import ParticipantManagementScreen from '../screens/ParticipantManagementScreen';
 import MyActivitiesScreen from '../screens/MyActivitiesScreen';
+import SearchScreen from '../screens/SearchScreen';
+import EditActivityScreen from '../screens/EditActivityScreen';
+import CheckInManagementScreen from '../screens/CheckInManagementScreen';
+import CheckInScreen from '../screens/CheckInScreen';
+import { io } from "socket.io-client";
+import { useSocket } from '../hooks/useSocket';
+import SettingsScreen from '../screens/SettingsScreen';
+import { useNavigation } from '@react-navigation/native';
+import { IconButton } from 'react-native-paper';
+import { NavigationContainer } from '@react-navigation/native';
+import { setNavigationRef } from '../components/NotificationManager';
+import { NotificationScreen } from '../screens/NotificationScreen';
+import FavoriteListScreen from '../screens/FavoriteListScreen';
+import FollowListScreen from '../screens/FollowListScreen';
 
 // 定义导航参数类型
 export type RootStackParamList = {
   Home: undefined;
   ActivityDetail: { activityId: string };
-  UserProfile: { userId?: string };
+  UserProfile: {
+    userId: string;
+  };
   Participants: { activityId: string; activityTitle: string };
   Explore: undefined;
-  ParticipantManagement: { activityId: string; activityTitle: string };
-  MyActivities: undefined;
+  ParticipantManagement: { 
+    activityId: string; 
+    activityTitle: string;
+  };
+  MyActivities: {
+    tab?: 'published' | 'joined';
+  };
   EditProfile: undefined;
+  EditActivity: { activityId: string };
+  CheckInManagement: {
+    activityId: string;
+    activityTitle: string;
+  };
+  CheckIn: {
+    activityId: string;
+    range: number;
+  };
+  Settings: undefined;
+  Notification: undefined;
+  FavoriteList: undefined;
+  FollowList: {
+    type: 'followers' | 'following';
+    title: string;
+  };
   // 其他页面...
 };
 
-const Stack = createStackNavigator();
+const Stack = createStackNavigator<RootStackParamList>();
 
 export const AppNavigator = () => {
     const isAuthenticated = useAppSelector((state: RootState) => state.auth.isAuthenticated);
-    const {status,user} = useAppSelector((state: RootState) => state.auth);
+    const {status, user} = useAppSelector((state: RootState) => state.auth);
+    useSocket();
     const dispatch = useAppDispatch();
-
+    const navigation = useNavigation();
+   
     useEffect(() => {
         dispatch(checkLoginStatus());
     }, []);
-
+  
 
     if (status === 'loading') {
         return (
@@ -52,7 +91,13 @@ export const AppNavigator = () => {
     }
 
     return (
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Navigator
+            screenOptions={{
+                headerShown: false,
+                gestureEnabled: true,
+                gestureDirection: 'horizontal',
+            }}
+        >
             {!isAuthenticated ? (
                 // 未登录状态显示的页面
                 <>
@@ -62,7 +107,7 @@ export const AppNavigator = () => {
             ) : (
                 // 已登录状态显示的页面
                 <>
-                    <Stack.Screen name="MainApp" component={BottomTabNavigator} />
+                    <Stack.Screen name="MainTabs" component={BottomTabNavigator} />
                     <Stack.Screen 
                         name="EditProfile" 
                         component={EditProfileScreen}
@@ -126,6 +171,55 @@ export const AppNavigator = () => {
                         name="MyActivities" 
                         component={MyActivitiesScreen}
                         options={{ headerShown: false }}
+                    />
+                    <Stack.Screen 
+                        name="Search" 
+                        component={SearchScreen} 
+                        options={{ headerShown: false }} 
+                    />
+                    <Stack.Screen 
+                        name="EditActivity" 
+                        component={EditActivityScreen}
+                        options={{ headerShown: false }}
+                    />
+                    <Stack.Screen 
+                        name="CheckInManagement" 
+                        component={CheckInManagementScreen} 
+                    />
+                    <Stack.Screen 
+                        name="CheckIn" 
+                        component={CheckInScreen}
+                        options={{ headerShown: false }}
+                    />
+                    <Stack.Screen
+                        name="Settings"
+                        component={SettingsScreen}
+                        options={{
+                            title: '设置',
+                            headerLeft: () => (
+                                <IconButton
+                                    icon="arrow-left"
+                                    onPress={() => navigation.goBack()}
+                                />
+                            ),
+                        }}
+                    />
+                    <Stack.Screen 
+                        name="Notification" 
+                        component={NotificationScreen}
+                        options={{ headerShown: false }}
+                    />
+                    <Stack.Screen 
+                        name="FavoriteList" 
+                        component={FavoriteListScreen}
+                        options={{ headerShown: false }}
+                    />
+                    <Stack.Screen 
+                        name="FollowList" 
+                        component={FollowListScreen}
+                        options={({ route }) => ({
+                            title: route.params.title,
+                        })}
                     />
                 </>
             )}

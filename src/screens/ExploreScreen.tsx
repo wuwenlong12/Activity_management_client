@@ -12,10 +12,11 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Activity } from '../api/activity/type';
-import { getActivity } from '../api/activity'; // 假设您有一个获取活动的API
+import { Activity, requestSearchActivity } from '../api/activity/type';
+import { getActivities } from '../api/activity'; // 假设您有一个获取活动的API
 import { Calendar } from 'react-native-calendars'; // 使用日历组件
 import { Picker } from '@react-native-picker/picker'; // 使用选择器组件
 import { useNavigation } from '@react-navigation/native';
@@ -25,11 +26,12 @@ import { getTag } from '../api/tag';
 import { tag } from '../api/tag/type';
 import { getSchoolList } from '../api/school';  
 import { school } from '../api/school/type';
+import { useAppSelector } from '../store';
+import dayjs from 'dayjs';
 const { width } = Dimensions.get('window');
-const CARD_MARGIN = 12;
-const CARD_WIDTH = (width - CARD_MARGIN * 3) / 2;
-
-
+const PADDING = 16;  // 屏幕两侧的内边距
+const SPACING = 12;  // 卡片之间的间距
+const CARD_WIDTH = (width - (PADDING * 2 + SPACING)) / 2;  // 考虑内边距和间距的卡片宽度
 
 type NavigationProp = StackNavigationProp<RootStackParamList, 'Explore'>;
 
@@ -40,12 +42,7 @@ export const ExploreScreen: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);  // 改为支持多选标签
   const [tags, setTags] = useState<tag[]>([]);
-  const [selectedSchool, setSelectedSchool] = useState<school | null>(null);
-  const [schools, setSchools] = useState<school[]>([]);
   const [searchText, setSearchText] = useState<string>('');
-  const [showSchoolPicker, setShowSchoolPicker] = useState(false);
-
-
 
   const [selectedStartDate, setSelectedStartDate] = useState('');
   const [selectedEndDate, setSelectedEndDate] = useState('');
@@ -57,36 +54,20 @@ export const ExploreScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  const { selectedSchool } = useAppSelector(state => state.school);
 
   useEffect(() => {
-    const fetchActivities = async () => {
-      const res = await getActivity(); // 获取活动数据
-      if (res.code === 0) {
-        setActivities(res.data.list);
-        setFilteredActivities(res.data.list);
-      }
-    };
     const fetchTags = async () => {
-      const res = await getTag(); // 获取活动数据
+      const res = await getTag();
       if (res.code === 0) {
         setTags(res.data);
       }
     };
-    const fetchSchools = async () => {
-      const res = await getSchoolList(); // 获取活动数据
-      if (res.code === 0) {
-        setSchools(res.data);
-        setSelectedSchool(res.data[0]);
-      }
-    };
-
-    fetchActivities();
     fetchTags();
-    fetchSchools();
+    fetchActivities(1, true);
   }, []);
 
-
-  const fetchActivities = async (isRefresh = false) => {
+  const fetchActivities = async (pageNum: number, isRefresh = false) => {
     try {
       setLoading(true);
       const params: requestSearchActivity = {
@@ -94,23 +75,23 @@ export const ExploreScreen: React.FC = () => {
         startDate: selectedStartDate || undefined,
         endDate: selectedEndDate || undefined,
         tags: selectedTags.length > 0 ? selectedTags : undefined,
-        page: isRefresh ? '1' : page,
-        limit
+        page: pageNum.toString(),
+        limit,
+        schoolId: selectedSchool?._id,
       };
 
-      const res = await getActivity(params);
+      const res = await getActivities(params);
       
       if (res.code === 0) {
         if (isRefresh) {
           setActivities(res.data.list);
           setFilteredActivities(res.data.list);
-          setPage('1');
-          setTotal(res.data.total);
         } else {
           setActivities(prev => [...prev, ...res.data.list]);
           setFilteredActivities(prev => [...prev, ...res.data.list]);
         }
-
+        setTotal(res.data.total);
+        setPage(pageNum.toString());
       }
     } catch (error) {
       console.error('获取活动列表失败:', error);
@@ -121,33 +102,24 @@ export const ExploreScreen: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchActivities(true);
-  }, [selectedStartDate, selectedEndDate, selectedTags, searchText]);
+    // 当筛选条件改变时，重新加载第一页
+    fetchActivities(1, true);
+  }, [searchText, selectedStartDate, selectedEndDate, selectedTags, selectedSchool]);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    fetchActivities(true);
+    fetchActivities(1, true);
   };
 
   const handleLoadMore = () => {
     if (!loading && total > activities.length) {
-      setPage(prev => (parseInt(prev) + 1).toString());
-      fetchActivities();
+      const nextPage = parseInt(page) + 1;
+      fetchActivities(nextPage);
     }
   };
 
   const renderHeader = () => (
     <View style={styles.headerContainer}>
-      {/* 学校选择器 */}
-      <TouchableOpacity
-        style={styles.schoolSelector}
-        onPress={() => setShowSchoolPicker(true)}
-      >
-        <Text style={styles.schoolText}>{selectedSchool?.name}</Text>
-
-        <Ionicons name="chevron-down" size={20} color="#666" />
-      </TouchableOpacity>
-
       {/* 搜索框 */}
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
@@ -162,14 +134,18 @@ export const ExploreScreen: React.FC = () => {
     </View>
   );
 
-  const renderActivityCard = ({ item }: { item: Activity }) => (
+  const renderActivityCard = ({ item, index }: { item: Activity; index: number }) => (
     <TouchableOpacity 
-      style={styles.activityCard}
+      style={[
+        styles.activityCard,
+        { marginLeft: index % 2 === 0 ? 0 : SPACING }  // 只给右边的卡片添加左边距
+      ]}
       onPress={() => navigation.navigate('ActivityDetail', { activityId: item.id })}
     >
       <Image 
         source={item.image ? { uri: item.image } : require('../../assets/logo.jpg')} 
         style={styles.activityImage}
+        resizeMode="cover"
       />
       <View style={styles.activityInfo}>
         <Text style={styles.activityTitle} numberOfLines={1}>{item.title}</Text>
@@ -187,7 +163,6 @@ export const ExploreScreen: React.FC = () => {
               <Text style={styles.tagText}>{tag.name}</Text>
             </View>
           ))}
-
         </View>
         <View style={styles.participantCountContainer}>
           <Ionicons name="people-outline" size={12} color="#666" />
@@ -311,6 +286,17 @@ export const ExploreScreen: React.FC = () => {
     return dates.slice(1, -1); // 不包括开始和结束日期
   };
 
+  const EmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <Image 
+        source={require('../../assets/null.png')} 
+        style={styles.emptyImage}
+      />
+      <Text style={styles.emptyText}>暂无活动</Text>
+      <Text style={styles.emptySubText}>暂时没有找到符合条件的活动</Text>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
@@ -370,65 +356,18 @@ export const ExploreScreen: React.FC = () => {
           renderItem={renderActivityCard}
           keyExtractor={item => item.id}
           numColumns={2}
+          contentContainerStyle={[
+            styles.listContent,
+            filteredActivities.length === 0 && styles.emptyListContent
+          ]}
           columnWrapperStyle={styles.columnWrapper}
-          contentContainerStyle={styles.activityListContent}
-          onRefresh={handleRefresh}
-          refreshing={refreshing}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.1}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="search" size={48} color="#999" />
-              <Text style={styles.emptyText}>暂无相关活动</Text>
-            </View>
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
           }
-          ListFooterComponent={
-            loading && !refreshing ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator color="#007AFF" />
-              </View>
-            ) : null
-          }
+          ListEmptyComponent={EmptyState}
         />
-
-        {/* 学校选择器模态框 */}
-        <Modal
-          visible={showSchoolPicker}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setShowSchoolPicker(false)}
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>选择学校</Text>
-                <TouchableOpacity
-                  onPress={() => setShowSchoolPicker(false)}
-                  style={styles.closeButton}
-                >
-                  <Ionicons name="close" size={24} color="#333" />
-                </TouchableOpacity>
-              </View>
-              <ScrollView>
-                {schools.map((school, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={styles.schoolItem}
-                    onPress={() => {
-                      setSelectedSchool(school);
-                      setShowSchoolPicker(false);
-                    }}
-                  >
-                    <Text style={styles.schoolItemText}>{school.name}</Text>
-                    {selectedSchool?._id === school._id && (
-                      <Ionicons name="checkmark" size={24} color="#007AFF" />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
 
         {renderCalendarModal()}
       </View>
@@ -439,7 +378,8 @@ export const ExploreScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F0F8FF',
+    // backgroundColor: '#F0F8FF',
+    backgroundColor:'#fff'
   },
   container: {
     flex: 1,
@@ -484,7 +424,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    backgroundColor: '#E3F2FD',
+    backgroundColor: '#F5F5F5',
     borderRadius: 8,
   },
   filterButtonText: {
@@ -495,8 +435,9 @@ const styles = StyleSheet.create({
   },
   tagContainer: {
     flexDirection: 'row',
-    marginTop: 4,
     flexWrap: 'wrap',
+    marginTop: 4,
+    gap: 4,
   },
   tagScrollContent: {
     flexGrow: 1,
@@ -528,13 +469,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   activityListContent: {
-    padding: CARD_MARGIN,
+    paddingRight: CARD_WIDTH,
+    paddingBottom: SPACING,
   },
   activityCard: {
     width: CARD_WIDTH,
     backgroundColor: '#fff',
     borderRadius: 12,
-    marginBottom: CARD_MARGIN,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -543,10 +484,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    overflow: 'hidden',
   },
   activityImage: {
     width: '100%',
-    height: CARD_WIDTH * 0.8,
+    height: CARD_WIDTH * 0.75,
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
@@ -555,14 +497,14 @@ const styles = StyleSheet.create({
   },
   activityTitle: {
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#333',
     marginBottom: 4,
   },
   dateLocationContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 4,
   },
   dateLocationText: {
     fontSize: 12,
@@ -575,8 +517,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    marginRight: 4,
-    marginTop: 2,
   },
   tagText: {
     fontSize: 10,
@@ -589,25 +529,14 @@ const styles = StyleSheet.create({
   },
   participantCountText: {
     fontSize: 12,
-    marginLeft: 4,
     color: '#666',
+    marginLeft: 4,
   },
   headerContainer: {
     padding: 16,
     backgroundColor: '#fff',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E0E0E0',
-  },
-  schoolSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  schoolText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginRight: 4,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -626,71 +555,11 @@ const styles = StyleSheet.create({
     color: '#333',
     padding: 0,
   },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E0E0E0',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  schoolItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E0E0E0',
-  },
-  schoolItemText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-    paddingHorizontal: 0,
-  },
-  emptyContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 32,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#999',
-    marginTop: 8,
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  calendarContainer: {
-    width: '90%',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
   },
   calendarHeader: {
     flexDirection: 'row',
@@ -733,30 +602,42 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E0E0E0',
   },
-  tagScrollContent: {
-    paddingHorizontal: 12,
-    gap: 8,
+  listContent: {
+    padding: PADDING,  // 使用统一的内边距
   },
-  tagButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#E3F2FD',
-    borderRadius: 20,
-    marginRight: 8,
-  },
-  tagButtonActive: {
-    backgroundColor: '#007AFF',
-  },
-  tagButtonText: {
-    color: '#666',
-    fontSize: 14,
-  },
-  tagButtonTextActive: {
-    color: '#fff',
+  columnWrapper: {
+    marginBottom: SPACING,  // 行间距
+    justifyContent: 'flex-start',  // 确保左对齐
   },
   loadingContainer: {
     padding: 12,
     alignItems: 'center',
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyImage: {
+    width: 200,
+    height: 200,
+    marginBottom: 20,
+    resizeMode: 'contain',
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  emptySubText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  emptyListContent: {
+    flexGrow: 1,
   },
 });
 

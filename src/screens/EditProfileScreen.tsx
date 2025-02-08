@@ -11,12 +11,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { useAppDispatch } from '../store';
+import { useAppDispatch, useAppSelector } from '../store';
 import { getVerificationCode } from '../api/auth';
 import * as ImagePicker from 'expo-image-picker';
 import SchoolPicker from '../components/SchoolPicker';
@@ -31,13 +32,19 @@ interface UserDetails {
   className: string;
   createdAt: string;
   email: string;
-  imgurl: string;
+  avatar: string;
   phone: string;
   role: string;
   school: string;
   studentId: string;
   updatedAt: string;
   username: string;
+  wx: string;
+}
+
+interface School {
+  _id: string;
+  name: string;
 }
 
 // 添加导航类型定义
@@ -58,13 +65,17 @@ export const EditProfileScreen: React.FC = () => {
   const [authCode, setAuthCode] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [showSchoolPicker, setShowSchoolPicker] = useState(false);
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
   const [profile, setProfile] = useState({
     school: '',
     className: '',
     studentId: '',
     phone: '',
+    wx: '',
     bio: '',
   });
+
+  const { schools } = useAppSelector(state => state.school);
 
   useEffect(() => {
     fetchUserDetails();
@@ -81,14 +92,23 @@ export const EditProfileScreen: React.FC = () => {
 
         setUsername(userData.username);
         setEmail(userData.email);
-        setAvatar(userData.imgurl);
+        setAvatar(userData.avatar);
         setProfile({
           school: userData.school || '',
           className: userData.className || '',
           studentId: userData.studentId || '',
           phone: userData.phone || '',
+          wx: userData.wx || '',
           bio: userData.bio || '',
         });
+
+        // 根据用户的 schoolId 设置选中的学校
+        if (userData.school._id) {
+          const userSchool = schools.find(school => school._id === userData.school._id);
+          if (userSchool) {
+            setSelectedSchool(userSchool);
+          }
+        }
       } else {
         Alert.alert('错误', '获取用户信息失败');
       }
@@ -168,12 +188,16 @@ const handleSubmit = async () => {
     return;
   }
 
+  if (!selectedSchool) {
+    Alert.alert('提示', '请选择学校');
+    return;
+  }
+
   try {
-    // 只提交已修改的字段
     const changedFields: Partial<UserDetails> = {};
     
     if (username !== userDetails?.username) changedFields.username = username;
-    if (avatar !== userDetails?.imgurl) changedFields.imgurl = avatar;
+    if (avatar !== userDetails?.avatar) changedFields.avatar = avatar;
     if (oldPassword) {
       changedFields.oldPassword = oldPassword;
       changedFields.newPassword = newPassword;
@@ -191,14 +215,17 @@ const handleSubmit = async () => {
       return;
     }
 
-    const res = await updateUserDetails(changedFields);
+    const res = await updateUserDetails({
+      ...changedFields,
+      school: selectedSchool.name,
+      schoolId: selectedSchool._id,
+      wx: profile.wx,
+    });
 
     if (res.code === 0) {
       await dispatch(updateUser());
-      
-      // 先显示提示，等用户确认后再返回
       Alert.alert('成功', '个人信息更新成功');
-      navigation.goBack();  // 在回调中执行返回操作
+      navigation.goBack();
     } else {
       Alert.alert('错误', res.message || '更新失败');
     }
@@ -207,6 +234,47 @@ const handleSubmit = async () => {
     Alert.alert('错误', '网络错误');
   }
 };
+
+const renderSchoolPicker = () => (
+  <Modal
+    visible={showSchoolPicker}
+    animationType="slide"
+    transparent={true}
+    onRequestClose={() => setShowSchoolPicker(false)}
+  >
+    <View style={styles.modalContainer}>
+      <View style={styles.modalContent}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>选择学校</Text>
+          <TouchableOpacity
+            onPress={() => setShowSchoolPicker(false)}
+            style={styles.closeButton}
+          >
+            <Ionicons name="close" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
+        <ScrollView>
+          {schools.map((school) => (
+            <TouchableOpacity
+              key={school._id}
+              style={styles.schoolItem}
+              onPress={() => {
+                setSelectedSchool(school);
+                setShowSchoolPicker(false);
+                setProfile({ ...profile, school: school.name });
+              }}
+            >
+              <Text style={styles.schoolItemText}>{school.name}</Text>
+              {selectedSchool?._id === school._id && (
+                <Ionicons name="checkmark" size={24} color="#007AFF" />
+              )}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    </View>
+  </Modal>
+);
 
 if (loading) {
   return (
@@ -277,18 +345,23 @@ return (
         {/* 学校信息 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>学校信息</Text>
-          <TouchableOpacity
-            style={styles.inputGroup}
-            onPress={() => setShowSchoolPicker(true)}
-          >
+          <View style={styles.formSection}>
             <Text style={styles.label}>学校</Text>
-            <View style={styles.schoolSelector}>
-              <Text style={[styles.input, !profile.school && styles.placeholder]}>
-                {profile.school || '请选择学校'}
-              </Text>
-              <Ionicons name="chevron-forward" size={20} color="#ccc" />
-            </View>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.input}
+              onPress={() => setShowSchoolPicker(true)}
+            >
+              <View style={styles.inputContent}>
+                <Text style={[
+                  styles.inputText,
+                  !selectedSchool && styles.placeholderText
+                ]}>
+                  {selectedSchool?.name || '选择学校'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#666" />
+              </View>
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>班级</Text>
@@ -316,14 +389,31 @@ return (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>联系方式</Text>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>手机号</Text>
-            <TextInput
-              style={styles.input}
-              value={profile.phone}
-              onChangeText={(text) => setProfile({ ...profile, phone: text })}
-              placeholder="请输入手机号"
-              keyboardType="phone-pad"
-            />
+            <View style={styles.inputItem}>
+              <Text style={styles.inputLabel}>手机号码</Text>
+              <TextInput
+                style={styles.input}
+                value={profile.phone}
+                onChangeText={(text) => setProfile(prev => ({ ...prev, phone: text }))}
+                placeholder="请输入手机号码"
+                keyboardType="phone-pad"
+              />
+            </View>
+            
+        
+          </View>
+          <View style={styles.inputGroup}>
+           
+            
+            <View style={styles.inputItem}>
+              <Text style={styles.inputLabel}>微信号</Text>
+              <TextInput
+                style={styles.input}
+                value={profile.wx}
+                onChangeText={(text) => setProfile(prev => ({ ...prev, wx: text }))}
+                placeholder="请输入微信号"
+              />
+            </View>
           </View>
         </View>
 
@@ -403,15 +493,7 @@ return (
       </View>
     </ScrollView>
 
-    <SchoolPicker
-      visible={showSchoolPicker}
-      onClose={() => setShowSchoolPicker(false)}
-      onSelect={(school) => {
-        setProfile({ ...profile, school: school.name });
-        setShowSchoolPicker(false);
-      }}
-      selectedSchool={profile.school}
-    />
+    {renderSchoolPicker()}
   </KeyboardAvoidingView>
 );
 };
@@ -560,22 +642,76 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: 8,
   },
-  schoolSelector: {
+  formSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#fff',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
+  },
+  inputContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#f8f8f8',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
   },
-  placeholder: {
+  inputText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  placeholderText: {
     color: '#999',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  schoolItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  schoolItemText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  inputItem: {
+    flex: 1,
+  },
+  inputLabel: {
+    fontSize: 15,
+    color: '#666',
+    marginBottom: 8,
   },
 });
 

@@ -20,6 +20,12 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import { Activity } from '../api/activity/type';
 import { getOrganizedActivities, getJoinedActivities } from '../api/activity';
 import dayjs from 'dayjs';
+import { getUserDetails } from '../api/user';
+import { useAppSelector } from '../store';
+import type { RootState } from '../store';
+import { addFollow, removeFollow, checkFollow } from '../api/follow';
+import Toast from 'react-native-toast-message';
+import { getUserCounts } from '../api/info';
 
 type NavigationProp = StackNavigationProp<RootStackParamList, 'UserProfile'>;
 
@@ -49,31 +55,25 @@ export const UserProfileScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { userId } = route.params as { userId: string };
+  const currentUserId = useAppSelector((state: RootState) => state.auth.user?._id);
   
-  // 模拟用户数据
-  const mockUserProfile: UserProfile = {
-    id: userId,
-    name: '张三',
-    avatar: require('../../assets/logo.jpg'),
-    school: '浙江大学',
-    bio: '热爱生活，热爱运动',
-    participatedCount: 12,
-    publishedCount: 3,
-    followersCount: 128,
-    followingCount: 56,
-    isFollowing: false,
-  };
-
+  const [userInfo, setUserInfo] = useState<any>(null);
+  const [isFollowing, setIsFollowing] = useState(false);
   const [activeTab, setActiveTab] = useState<'joined' | 'organized'>('joined');
-  const [isFollowing, setIsFollowing] = useState(mockUserProfile.isFollowing);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | ActivityStatus>('all');
   const [profileLoading, setProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userCounts, setUserCounts] = useState({
+    publishedCount: 0,
+    participatedCount: 0,
+    followersCount: 0,
+    followingCount: 0
+  });
 
   // 添加动画值
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -82,6 +82,60 @@ export const UserProfileScreen: React.FC = () => {
     outputRange: [200, 100],
     extrapolate: 'clamp',
   });
+
+  // 判断是否是查看自己的主页
+  const isOwnProfile = currentUserId === userId;
+console.log(currentUserId);
+console.log(userId);
+
+  // 获取用户信息和关注状态
+  const fetchUserInfo = async () => {
+    try {
+      setLoading(true);
+      const [userRes, followRes] = await Promise.all([
+        getUserDetails({ id: userId }),
+        checkFollow(userId)
+      ]);
+      
+      if (userRes.code === 0) {
+        setUserInfo(userRes.data);
+      }
+      
+      if (followRes.code === 0) {
+        setIsFollowing(followRes.data.isFollowing);
+      }
+    } catch (error) {
+      console.error('获取用户信息失败:', error);
+      Toast.show({
+        type: 'error',
+        text1: '获取用户信息失败',
+        text2: '请稍后重试',
+        position: 'bottom',
+        visibilityTime: 2000,
+        bottomOffset: 40,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 获取用户统计数据
+  const fetchUserCounts = async () => {
+    try {
+      const res = await getUserCounts(userId);
+      if (res.code === 0) {
+        setUserCounts(res.data);
+      }
+    } catch (error) {
+      console.error('获取用户统计数据失败:', error);
+    }
+  };
+
+  // 在获取用户信息的同时获取统计数据
+  useEffect(() => {
+    fetchUserInfo();
+    fetchUserCounts();
+  }, [userId]);
 
   // 添加活动获取逻辑
   useEffect(() => {
@@ -110,16 +164,65 @@ export const UserProfileScreen: React.FC = () => {
     }
   };
 
-  // 模拟关注/取消关注
-  const handleFollow = useCallback(async () => {
+  // 关注/取消关注处理
+  const handleFollow = async () => {
     try {
-      // 模拟网络延迟
-      await new Promise(resolve => setTimeout(resolve, 500));
-      setIsFollowing(!isFollowing);
+      if (isFollowing) {
+        const res = await removeFollow(userId);
+        if (res.code === 0) {
+          setIsFollowing(false);
+          fetchUserCounts(); // 重新获取最新的统计数据
+          Toast.show({
+            type: 'success',
+            text1: '已取消关注',
+            position: 'bottom',
+            visibilityTime: 2000,
+            bottomOffset: 40,
+          });
+        } else {
+          Toast.show({
+            type: 'error',
+            text1: '取消关注失败',
+            text2: res.message,
+            position: 'bottom',
+            visibilityTime: 2000,
+            bottomOffset: 40,
+          });
+        }
+      } else {
+        const res = await addFollow(userId);
+        if (res.code === 0) {
+          setIsFollowing(true);
+          fetchUserCounts(); // 重新获取最新的统计数据
+          Toast.show({
+            type: 'success',
+            text1: '关注成功',
+            position: 'bottom',
+            visibilityTime: 2000,
+            bottomOffset: 40,
+          });
+        } else {
+          Toast.show({
+            type: 'error',
+            text1: '关注失败',
+            text2: res.message,
+            position: 'bottom',
+            visibilityTime: 2000,
+            bottomOffset: 40,
+          });
+        }
+      }
     } catch (error) {
-      Alert.alert('错误', '操作失败');
+      Toast.show({
+        type: 'error',
+        text1: '网络错误',
+        text2: '请稍后重试',
+        position: 'bottom',
+        visibilityTime: 2000,
+        bottomOffset: 40,
+      });
     }
-  }, [isFollowing]);
+  };
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -192,7 +295,9 @@ export const UserProfileScreen: React.FC = () => {
         >
           <Ionicons name="chevron-back" size={24} color="#333" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>用户主页</Text>
+        <Text style={styles.headerTitle}>
+          {isOwnProfile ? '我的主页' : '用户主页'}
+        </Text>
         <View style={styles.placeholder} />
       </View>
 
@@ -205,63 +310,92 @@ export const UserProfileScreen: React.FC = () => {
         scrollEventThrottle={16}
       >
         <View style={styles.profileHeader}>
-          <Image source={mockUserProfile.avatar} style={styles.avatar} />
+          <Image 
+            source={userInfo?.avatar ? { uri: userInfo.avatar } : require('../../assets/logo.jpg')} 
+            style={styles.avatar}
+          />
           <View style={styles.profileInfo}>
-            <Text style={styles.name}>{mockUserProfile.name}</Text>
-            {mockUserProfile.school && (
-              <Text style={styles.school}>{mockUserProfile.school}</Text>
+            <Text style={styles.name}>{userInfo?.username || '未知用户'}</Text>
+            {userInfo?.school?.name && (
+              <View style={styles.infoRow}>
+                <Ionicons name="school-outline" size={16} color="#666" />
+                <Text style={styles.infoText}>{userInfo.school.name}</Text>
+              </View>
             )}
-            {mockUserProfile.bio && (
-              <Text style={styles.bio}>{mockUserProfile.bio}</Text>
+            {userInfo?.bio && (
+              <Text style={styles.bio}>{userInfo.bio}</Text>
             )}
           </View>
           
-          <View style={styles.profileActions}>
-            <TouchableOpacity 
-              style={[
-                styles.followButton,
-                isFollowing && styles.followingButton,
-              ]}
-              onPress={handleFollow}
-            >
-              <Text style={[
-                styles.followButtonText,
-                isFollowing && styles.followingButtonText,
-              ]}>
-                {isFollowing ? '已关注' : '关注'}
-              </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.messageButton}
-              onPress={() => navigation.navigate('Chat', { 
-                userId: userId,
-                userName: mockUserProfile.name,
-                userAvatar: mockUserProfile.avatar,
-              })}
-            >
-              <Ionicons name="chatbubble-outline" size={20} color="#666" />
-            </TouchableOpacity>
-          </View>
+          {/* 只有查看他人主页时才显示关注和私信按钮 */}
+          {!isOwnProfile && (
+            <View style={styles.profileActions}>
+              <TouchableOpacity 
+                style={[
+                  styles.followButton,
+                  isFollowing && styles.followingButton,
+                ]}
+                onPress={handleFollow}
+              >
+                <Text style={[
+                  styles.followButtonText,
+                  isFollowing && styles.followingButtonText,
+                ]}>
+                  {isFollowing ? '已关注' : '关注'}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.messageButton}
+                onPress={() => navigation.navigate('Chat', { 
+                  targetId: userId,
+                  userName: userInfo?.username,
+                  userAvatar: userInfo?.avatar,
+                })}
+              >
+                <Ionicons name="chatbubble-outline" size={20} color="#666" />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         <View style={styles.stats}>
           <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{mockUserProfile.participatedCount}</Text>
+            <Text style={styles.statNumber}>{userCounts.participatedCount}</Text>
             <Text style={styles.statLabel}>参与活动</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{mockUserProfile.publishedCount}</Text>
+            <Text style={styles.statNumber}>{userCounts.publishedCount}</Text>
             <Text style={styles.statLabel}>发布活动</Text>
           </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{mockUserProfile.followersCount}</Text>
+          <TouchableOpacity 
+            style={styles.statItem}
+            onPress={() => {
+              if (isOwnProfile) {
+                navigation.navigate('FollowList', { 
+                  type: 'followers',
+                  title: '关注者'
+                });
+              }
+            }}
+          >
+            <Text style={styles.statNumber}>{userCounts.followersCount}</Text>
             <Text style={styles.statLabel}>关注者</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{mockUserProfile.followingCount}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.statItem}
+            onPress={() => {
+              if (isOwnProfile) {
+                navigation.navigate('FollowList', { 
+                  type: 'following',
+                  title: '正在关注'
+                });
+              }
+            }}
+          >
+            <Text style={styles.statNumber}>{userCounts.followingCount}</Text>
             <Text style={styles.statLabel}>正在关注</Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* 添加活动类型切换和列表 */}
@@ -378,7 +512,6 @@ const styles = StyleSheet.create({
   },
   profileHeader: {
     padding: 20,
-    paddingBottom: 0,
     backgroundColor: '#fff',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e0e0e0',
@@ -394,35 +527,34 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     marginBottom: 12,
-    alignSelf: 'center',
   },
   name: {
     fontSize: 20,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 4,
-    textAlign: 'center',
+    marginBottom: 8,
   },
-  school: {
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoText: {
     fontSize: 14,
     color: '#666',
-    marginBottom: 8,
-    textAlign: 'center',
+    marginLeft: 6,
   },
   bio: {
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-    marginBottom: 8,
+    lineHeight: 20,
     paddingHorizontal: 20,
   },
   profileActions: {
-    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 12,
-    marginBottom: 16,
   },
   followButton: {
     paddingHorizontal: 32,
@@ -440,6 +572,14 @@ const styles = StyleSheet.create({
   },
   followingButtonText: {
     color: '#666',
+  },
+  messageButton: {
+    width: 36,
+    height: 36,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   stats: {
     flexDirection: 'row',
@@ -545,26 +685,9 @@ const styles = StyleSheet.create({
   activityInfo: {
     gap: 8,
   },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666',
-  },
   loadingContainer: {
     padding: 16,
     alignItems: 'center',
-  },
-  messageButton: {
-    width: 36,
-    height: 36,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   errorContainer: {
     padding: 16,

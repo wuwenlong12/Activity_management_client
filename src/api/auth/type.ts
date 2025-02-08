@@ -1,5 +1,6 @@
 import { ResponseBase } from "../type";
 import { tag } from "../tag/type";
+import { school } from "../school/type";
 
 export interface ResponseCheckSystemInit extends ResponseBase {
   data: CheckSystemInitData;
@@ -13,9 +14,10 @@ export interface ResponseLogin extends ResponseBase {
 }
 
 export type User = {
-  id?: string;
+  _id?: string;
   username?: string;
   email?: string;
+  school?: school;
   role: {
     _id: string;
     name: "superAdmin" | "webMaster" | "user";
@@ -23,7 +25,14 @@ export type User = {
   };
   managedSites: [];
   password?: string;
-  imgurl?: string;
+  avatar?: string;
   oldPassword?: string;
   newPassword?: string;
 };
+
+export interface RegisterParams {
+  username: string;
+  email: string;
+  password: string;
+  auth_code: string;
+  schoolId: string;

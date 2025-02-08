@@ -9,14 +9,16 @@ import {
   SafeAreaView,
   Dimensions,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { Activity } from '../api/activity/type';
 import { getOrganizedActivities, getJoinedActivities } from '../api/activity';
 import dayjs from 'dayjs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 const CARD_MARGIN = 16;
@@ -27,32 +29,70 @@ type NavigationProp = StackNavigationProp<RootStackParamList, 'MyActivities'>;
 // 更新状态类型定义
 type ActivityStatus = 'pending' | 'upcoming' | 'proceed' | 'cancelled' | 'over';
 
+const PAGE_SIZE = 10;
+
+type TabType = 'published' | 'joined';
+
 export const MyActivitiesScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const [activeTab, setActiveTab] = useState<'joined' | 'organized'>('joined');
+  const route = useRoute();
+  const insets = useSafeAreaInsets();
+  const initialTab = (route.params as any)?.tab || 'published';
+
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | ActivityStatus>('all');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
-    fetchActivities();
-  }, [activeTab, statusFilter]);
+    setPage(1);
+    setActivities([]);
+    setLoading(true);
+    fetchActivities(1, true);
+  }, [activeTab]);
 
-  const fetchActivities = async () => {
+  const fetchActivities = async (pageNum: number, isRefresh = false) => {
     try {
-      const res = activeTab === 'joined' 
-        ? await getJoinedActivities({status:statusFilter === 'all' ? undefined : statusFilter as ActivityStatus})
-        : await getOrganizedActivities({status:statusFilter === 'all' ? undefined : statusFilter as ActivityStatus});
+      if (!isRefresh) setLoadingMore(true);
       
-      if (res.code === 0 && res.data?.list) {
-        setActivities(res.data.list);
-      } else {
-        setActivities([]);
-        console.warn('获取活动列表失败:', res.message);
+      const params = {
+        page: pageNum,
+        limit: PAGE_SIZE,
+      };
+
+      const api = activeTab === 'published' ? getOrganizedActivities : getJoinedActivities;
+      const res = await api(params);
+
+      if (res.code === 0) {
+        if (isRefresh) {
+          setActivities(res.data.list);
+        } else {
+          setActivities(prev => [...prev, ...res.data.list]);
+        }
+        setHasMore(res.data.list.length === PAGE_SIZE);
+        setPage(pageNum);
       }
     } catch (error) {
-      setActivities([]);
       console.error('获取活动列表失败:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
     }
+  };
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchActivities(1, true);
+  };
+
+  const handleLoadMore = () => {
+    if (!hasMore || loadingMore) return;
+    fetchActivities(page + 1);
   };
 
   // 获取状态显示文本
@@ -139,7 +179,7 @@ export const MyActivitiesScreen: React.FC = () => {
             <Ionicons name="people-outline" size={16} color="#666" />
             <Text style={styles.participantsText}>{item.participants_count}人参与</Text>
           </View>
-          {activeTab === 'organized' && (
+          {activeTab === 'published' && (
             <TouchableOpacity 
               style={styles.manageButton}
               onPress={() => navigation.navigate('ParticipantManagement', {
@@ -164,8 +204,9 @@ export const MyActivitiesScreen: React.FC = () => {
       >
         {[
           { key: 'all', label: '全部' },
+          { key: 'notStart', label: '未开始报名' },
           { key: 'pending', label: '报名中' },
-          { key: 'upcoming', label: '即将开始' },
+          { key: 'upcoming', label: '活动即将开始' },
           { key: 'proceed', label: '进行中' },
           { key: 'cancelled', label: '已取消' },
           { key: 'over', label: '已结束' },
@@ -192,29 +233,33 @@ export const MyActivitiesScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+      <View style={[styles.header, { paddingTop: insets.top }]}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
           <Ionicons name="chevron-back" size={24} color="#333" />
         </TouchableOpacity>
-        <Text style={styles.title}>我的活动</Text>
-        <View style={{ width: 24 }} />
+        <Text style={styles.headerTitle}>我的活动</Text>
+        <View style={styles.headerRight} />
       </View>
 
       <View style={styles.tabContainer}>
-        <TouchableOpacity 
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'published' && styles.activeTab]}
+          onPress={() => setActiveTab('published')}
+        >
+          <Text style={[styles.tabText, activeTab === 'published' && styles.activeTabText]}>
+            已发布
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.tab, activeTab === 'joined' && styles.activeTab]}
           onPress={() => setActiveTab('joined')}
         >
           <Text style={[styles.tabText, activeTab === 'joined' && styles.activeTabText]}>
-            我参与的
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'organized' && styles.activeTab]}
-          onPress={() => setActiveTab('organized')}
-        >
-          <Text style={[styles.tabText, activeTab === 'organized' && styles.activeTabText]}>
-            我发布的
+            已参与
           </Text>
         </TouchableOpacity>
       </View>
@@ -226,13 +271,31 @@ export const MyActivitiesScreen: React.FC = () => {
         renderItem={renderActivityCard}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContent}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.2}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="calendar-outline" size={48} color="#999" />
-            <Text style={styles.emptyText}>
-              {activeTab === 'joined' ? '暂无参与的活动' : '暂无发布的活动'}
-            </Text>
-          </View>
+          !loading ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons 
+                name={activeTab === 'published' ? 'megaphone-outline' : 'people-outline'} 
+                size={48} 
+                color="#999" 
+              />
+              <Text style={styles.emptyText}>
+                {activeTab === 'published' ? '暂无发布的活动' : '暂无参与的活动'}
+              </Text>
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          loadingMore && activities.length > 0 ? (
+            <View style={styles.footerContainer}>
+              <ActivityIndicator size="small" color="#999" />
+              <Text style={styles.footerText}>加载更多...</Text>
+            </View>
+          ) : null
         }
       />
     </SafeAreaView>
@@ -424,6 +487,17 @@ const styles = StyleSheet.create({
   },
   filterButtonTextActive: {
     color: '#fff',
+  },
+  footerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+    gap: 8,
+  },
+  footerText: {
+    fontSize: 14,
+    color: '#999',
   },
 });
 

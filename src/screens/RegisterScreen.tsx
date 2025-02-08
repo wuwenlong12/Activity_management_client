@@ -9,6 +9,8 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -16,6 +18,8 @@ import { useAppDispatch, useAppSelector } from '../store';
 import { register, getVerificationCode } from '../api/auth';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { setUser } from '../store/slices/authSlice';
+import { setSchools } from '../store/slices/schoolSlice';
+import { getSchoolList } from '../api/school';
 
 type RootStackParamList = {
   Login: undefined;
@@ -29,6 +33,8 @@ export const RegisterScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const dispatch = useAppDispatch();
   const [loading, setLoading] = useState(false);
+  const [loadingSchools, setLoadingSchools] = useState(true);
+  const { schools } = useAppSelector(state => state.school);
   
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -37,6 +43,31 @@ export const RegisterScreen: React.FC = () => {
   const [verificationCode, setVerificationCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [selectedSchool, setSelectedSchool] = useState<school | null>(null);
+  const [showSchoolPicker, setShowSchoolPicker] = useState(false);
+
+  useEffect(() => {
+    const fetchSchools = async () => {
+      try {
+        setLoadingSchools(true);
+        const res = await getSchoolList();
+   
+        if (res.code === 0) {
+          console.log(res);
+          dispatch(setSchools(res.data));
+        } else {
+          Alert.alert('错误', '获取学校列表失败');
+        }
+      } catch (error) {
+        console.error('获取学校列表失败:', error);
+        Alert.alert('错误', '网络错误');
+      } finally {
+        setLoadingSchools(false);
+      }
+    };
+
+    fetchSchools();
+  }, [dispatch]);
 
   useEffect(() => {
     if (countdown > 0) {
@@ -77,6 +108,11 @@ const validateEmail = (email:string) => {
   };
 
   const handleRegister = async () => {
+    if (!selectedSchool) {
+      Alert.alert('提示', '请选择学校');
+      return;
+    }
+
     if (!email || !username || !password || !confirmPassword || !verificationCode) {
       Alert.alert('提示', '请填写所有必填项');
       return;
@@ -94,21 +130,17 @@ const validateEmail = (email:string) => {
 
     try {
       setLoading(true);
-      const res = await register(
-        username,
+      const res = await register({
         email,
         password,
-        verificationCode,
-      );
+        username,
+        auth_code: verificationCode,
+        schoolId: selectedSchool._id,
+      });
 
       if (res.code === 0) {
-        dispatch(setUser(res.data));
-        Alert.alert('成功', '注册成功', [
-          {
-            text: '确定',
-            onPress: () => navigation.replace('MainApp'),
-          },
-        ]);
+        Alert.alert('成功', '注册成功');
+        navigation.goBack()
       } else {
         Alert.alert('错误', res.message || '注册失败，请重试');
       }
@@ -118,6 +150,52 @@ const validateEmail = (email:string) => {
       setLoading(false);
     }
   };
+
+  const renderSchoolPicker = () => (
+    <Modal
+      visible={showSchoolPicker}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setShowSchoolPicker(false)}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>选择学校</Text>
+            <TouchableOpacity
+              onPress={() => setShowSchoolPicker(false)}
+              style={styles.closeButton}
+            >
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          {loadingSchools ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#007AFF" />
+            </View>
+          ) : (
+            <ScrollView>
+              {schools.map((school) => (
+                <TouchableOpacity
+                  key={school._id}
+                  style={styles.schoolItem}
+                  onPress={() => {
+                    setSelectedSchool(school);
+                    setShowSchoolPicker(false);
+                  }}
+                >
+                  <Text style={styles.schoolItemText}>{school.name}</Text>
+                  {selectedSchool?._id === school._id && (
+                    <Ionicons name="checkmark" size={24} color="#007AFF" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -137,7 +215,21 @@ const validateEmail = (email:string) => {
       </View>
 
       <View style={styles.inputContainer}>
-
+      <View style={styles.inputWrapper}>
+          <Ionicons name="school-outline" size={20} color="#666" style={styles.inputIcon} />
+          <TouchableOpacity
+            style={styles.schoolSelector}
+            onPress={() => setShowSchoolPicker(true)}
+          >
+            <Text style={[
+              styles.schoolText,
+              !selectedSchool && { color: '#999' }
+            ]}>
+              {selectedSchool?.name || '选择学校'}
+            </Text>
+            <Ionicons name="chevron-down" size={20} color="#666" />
+          </TouchableOpacity>
+        </View>
         <View style={styles.inputWrapper}>
           <Ionicons name="person-outline" size={20} color="#666" style={styles.inputIcon} />
           <TextInput
@@ -213,6 +305,7 @@ const validateEmail = (email:string) => {
             maxLength={6}
           />
         </View>
+     
         <TouchableOpacity
           style={[styles.registerButton, loading && styles.registerButtonDisabled]}
           onPress={handleRegister}
@@ -226,6 +319,7 @@ const validateEmail = (email:string) => {
         </TouchableOpacity>
    
       </View>
+      {renderSchoolPicker()}
     </KeyboardAvoidingView>
   );
 };
@@ -310,6 +404,81 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  schoolItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  schoolItemText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  inputContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  inputText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  placeholderText: {
+    color: '#999',
+  },
+  formItem: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  loadingContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  schoolSelector: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    height: '100%',
+  },
+  schoolText: {
+    fontSize: 16,
+    color: '#333',
   },
 });
 

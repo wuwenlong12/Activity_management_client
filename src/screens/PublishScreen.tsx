@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import DateTimePickerModal from "react-native-modal-datetime-picker";
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import MapView, { Marker } from 'react-native-maps';
@@ -26,6 +26,8 @@ import dayjs from 'dayjs';
 import { uploadFileInChunks } from '../util/uploadFileInChunks';
 import { tag } from '../api/tag/type';
 import { getTag } from '../api/tag';
+import { useAppSelector } from '../store';
+import 'dayjs/locale/zh-cn';
 
 interface User {
   id: string;
@@ -36,7 +38,10 @@ interface User {
 interface ActivityForm {
   title: string;
   image: string | undefined;
-  date: Date | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  signUpStartTime: Date | null;
+  signUpEndTime: Date | null;
   location: {
     name: string;
     address: string;
@@ -47,6 +52,11 @@ interface ActivityForm {
   description: string;
   notice: string[];
   tags: string[];
+}
+
+interface School {
+  _id: string;
+  name: string;
 }
 
 // 定义导航参数类型
@@ -123,21 +133,222 @@ const NumberPicker: React.FC<{
   );
 };
 
+// 设置 dayjs 使用中文
+dayjs.locale('zh-cn');
 
 export const PublishScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const [form, setForm] = useState<ActivityForm>({
+  const { selectedSchool } = useAppSelector(state => state.school);
+
+  const [form, setForm] = useState({
     title: '',
-    image: undefined,
-    date: null,
-    location: null,
+    image: '',
+    startTime: null as Date | null,    // 活动开始时间
+    endTime: null as Date | null,      // 活动结束时间
+    signUpStartTime: null as Date | null,  // 报名开始时间
+    signUpEndTime: null as Date | null,    // 报名结束时间
+    location: null as {
+      name: string;
+      address: string;
+      latitude: number;
+      longitude: number;
+    } | null,
     maxParticipants: '',
     description: '',
-    notice: ['请准时参加', '遵守活动规则'],
-    tags: [],
+    notice: ['请准时参加', '遵守活动规则'] as string[],
+    tags: [] as string[],
   });
 
+  // 时间选择器状态
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [currentDateField, setCurrentDateField] = useState<
+    'startTime' | 'endTime' | 'signUpStartTime' | 'signUpEndTime' | null
+  >(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [datePickerMode, setDatePickerMode] = useState<'date' | 'time'>('date');
+
+  // 处理时间选择
+  const handleShowDatePicker = (
+    field: 'startTime' | 'endTime' | 'signUpStartTime' | 'signUpEndTime'
+  ) => {
+    setCurrentDateField(field);
+    setShowDatePicker(true);
+  };
+
+  const getMinDate = () => {
+    const now = new Date();
+    // 将当前时间向上取整到下一个整分钟
+    now.setSeconds(0, 0);
+    now.setMinutes(now.getMinutes() + 1);
+
+    switch (currentDateField) {
+      case 'signUpStartTime':
+        // 报名开始时间不能早于当前时间
+        return now;
+      case 'signUpEndTime':
+        // 报名结束时间不能早于报名开始时间或当前时间
+        return form.signUpStartTime && form.signUpStartTime > now 
+          ? form.signUpStartTime 
+          : now;
+      case 'startTime':
+        // 活动开始时间不能早于报名结束时间或当前时间
+        return form.signUpEndTime && form.signUpEndTime > now 
+          ? form.signUpEndTime 
+          : now;
+      case 'endTime':
+        // 活动结束时间不能早于活动开始时间或当前时间
+        return form.startTime && form.startTime > now 
+          ? form.startTime 
+          : now;
+      default:
+        return now;
+    }
+  };
+
+  const getMaxDate = () => {
+    const maxDate = new Date();
+    maxDate.setFullYear(maxDate.getFullYear() + 1); // 最多允许选择一年后的时间
+
+    switch (currentDateField) {
+      case 'signUpStartTime':
+        // 报名开始时间不能晚于报名结束时间（如果已设置）或活动结束时间
+        return form.signUpEndTime || form.endTime || maxDate;
+      case 'signUpEndTime':
+        // 报名结束时间不能晚于活动开始时间（如果已设置）
+        return form.startTime || maxDate;
+      case 'startTime':
+        // 活动开始时间不能晚于活动结束时间（如果已设置）
+        return form.endTime || maxDate;
+      case 'endTime':
+        // 活动结束时间最多可以选择一年后
+        return maxDate;
+      default:
+        return maxDate;
+    }
+  };
+
+  const handleDateConfirm = (date: Date) => {
+    if (!currentDateField) return;
+
+    const now = new Date();
+    // 将当前时间向上取整到下一个整分钟
+    now.setSeconds(0, 0);
+    now.setMinutes(now.getMinutes() + 1);
+
+    // 检查是否选择了过去的时间
+    if (date < now) {
+      Alert.alert('提示', '不能选择过去的时间');
+      return;
+    }
+
+    // 验证时间逻辑
+    if (currentDateField === 'endTime' && form.startTime && date <= form.startTime) {
+      Alert.alert('提示', '结束时间必须晚于开始时间');
+      return;
+    }
+    if (currentDateField === 'signUpEndTime') {
+      if (form.signUpStartTime && date <= form.signUpStartTime) {
+        Alert.alert('提示', '报名结束时间必须晚于报名开始时间');
+        return;
+      }
+      if (form.endTime && date >= form.endTime) {
+        Alert.alert('提示', '报名结束时间必须早于活动结束时间');
+        return;
+      }
+    }
+    if (currentDateField === 'startTime' && form.signUpEndTime && date <= form.signUpEndTime) {
+      Alert.alert('提示', '活动开始时间必须晚于报名结束时间');
+      return;
+    }
+    if (currentDateField === 'signUpStartTime' && form.endTime && date >= form.endTime) {
+      Alert.alert('提示', '报名开始时间必须早于活动结束时间');
+      return;
+    }
+
+    setForm(prev => ({ ...prev, [currentDateField]: date }));
+    setShowDatePicker(false);
+    setCurrentDateField(null);
+  };
+
+  // 表单验证
+  const validateForm = () => {
+    if (!selectedSchool) {
+      Alert.alert('提示', '请选择学校');
+      return false;
+    }
+    if (!form.title.trim()) {
+      Alert.alert('提示', '请输入活动标题');
+      return false;
+    }
+    if (!form.image) {
+      Alert.alert('提示', '请选择活动封面');
+      return false;
+    }
+    if (!form.startTime || !form.endTime) {
+      Alert.alert('提示', '请选择活动时间');
+      return false;
+    }
+    if (!form.signUpStartTime || !form.signUpEndTime) {
+      Alert.alert('提示', '请选择报名时间');
+      return false;
+    }
+    if (form.startTime < form.signUpEndTime) {
+      Alert.alert('提示', '活动开始时间必须晚于报名结束时间');
+      return false;
+    }
+    if (form.endTime <= form.startTime) {
+      Alert.alert('提示', '活动结束时间必须晚于开始时间');
+      return false;
+    }
+    if (form.signUpEndTime <= form.signUpStartTime) {
+      Alert.alert('提示', '报名结束时间必须晚于报名开始时间');
+      return false;
+    }
+    if (form.signUpEndTime >= form.endTime) {
+      Alert.alert('提示', '报名结束时间必须早于活动结束时间');
+      return false;
+    }
+    if (form.signUpStartTime >= form.endTime) {
+      Alert.alert('提示', '报名开始时间必须早于活动结束时间');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
+
+    try {
+      const res = await postActivity({
+        title: form.title,
+        image: form.image,
+        startTime: form.startTime!,
+        endTime: form.endTime!,
+        signUpStartTime: form.signUpStartTime!,
+        signUpEndTime: form.signUpEndTime!,
+        location: form.location!,
+        participantLimit: form.maxParticipants,
+        description: form.description,
+        notices: form.notice,
+        tags: tags,
+        schoolId: selectedSchool?._id!,
+      });
+
+      if (res.code === 0) {
+        Alert.alert('成功', '活动发布成功', [
+          {
+            text: '确定',
+            onPress: () => navigation.goBack(),
+          },
+        ]);
+      } else {
+        Alert.alert('错误', res.message || '发布失败');
+      }
+    } catch (error) {
+      Alert.alert('错误', '网络错误');
+    }
+  };
+
   const [showMapModal, setShowMapModal] = useState(false);
   const [user] = useState<User>({
     id: '1',
@@ -146,7 +357,8 @@ export const PublishScreen: React.FC = () => {
 
   const [tags, setTags] = useState<string[]>([]); // 新增状态管理标签
   const [predefinedTags, setPredefinedTags] = useState<tag[]>([]);
- 
+  const { schools } = useAppSelector(state => state.school);
+  const [showSchoolPicker, setShowSchoolPicker] = useState(false);
 
   useEffect(()=>{
     getTag().then(res=>{
@@ -197,11 +409,6 @@ export const PublishScreen: React.FC = () => {
    
   };
 
-  const handleDateConfirm = (date: Date) => {
-    setForm(prev => ({ ...prev, date }));
-    setShowDatePicker(false);
-  };
-
   const handleLocationSelect = async (location: { latitude: number; longitude: number }) => {
     const { latitude, longitude } = location;
 
@@ -221,50 +428,6 @@ export const PublishScreen: React.FC = () => {
     setShowMapModal(false); // 选择位置后关闭模态弹窗
   };
 
-  const handleSubmit = async () => {
-    // 表单验证
-    if (!form.title.trim()) {
-      Alert.alert('提示', '请输入活动标题');
-      return;
-    }
-    if (!form.image) {
-      Alert.alert('提示', '请选择活动封面');
-      return;
-    }
-    if (!form.date) {
-      Alert.alert('提示', '请选择活动时间');
-      return;
-    }
-
-    if (!form.maxParticipants) {
-      Alert.alert('提示', '请输入人数限制');
-      return;
-    }
-    if (!form.description.trim()) {
-      Alert.alert('提示', '请输入活动描述');
-      return;
-    }
-
-    const res = await postActivity({
-      title: form.title,
-      time: form.date,
-      location: form.location,
-      participantLimit: form.maxParticipants,
-      description: form.description,
-      notices: form.notice,
-      tags: tags,
-    });
-    if (res.code === 0) {
-      Alert.alert('提示', '发布成功');
-      // navigation.goBack();
-    } else {
-      Alert.alert('提示', '发布失败');
-    }
-  
-  };
-
-
-
   const handleTagSelect = (tag: string) => {
     console.log(tag);
     
@@ -277,6 +440,134 @@ export const PublishScreen: React.FC = () => {
     } else {
       Alert.alert('提示', '最多只能添加两个标签');
     }
+  };
+
+  const renderSchoolPicker = () => (
+    <Modal
+      visible={showSchoolPicker}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setShowSchoolPicker(false)}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>选择学校</Text>
+            <TouchableOpacity
+              onPress={() => setShowSchoolPicker(false)}
+              style={styles.closeButton}
+            >
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView>
+            {schools.map((school) => (
+              <TouchableOpacity
+                key={school._id}
+                style={styles.schoolItem}
+                onPress={() => {
+                  setForm(prev => ({ ...prev, location: { name: school.name, address: '', latitude: 0, longitude: 0 } }));
+                  setShowSchoolPicker(false);
+                }}
+              >
+                <Text style={styles.schoolItemText}>{school.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // 修改时间选择器的渲染函数
+  const renderDatePicker = () => {
+    if (Platform.OS === 'ios') {
+      return (
+        <Modal
+          visible={showDatePicker}
+          transparent={true}
+          animationType="slide"
+        >
+          <View style={styles.datePickerModal}>
+            <View style={styles.datePickerContainer}>
+              <View style={styles.datePickerHeader}>
+                <TouchableOpacity 
+                  onPress={() => {
+                    setShowDatePicker(false);
+                    setCurrentDateField(null);
+                  }}
+                >
+                  <Text style={styles.datePickerCancelText}>取消</Text>
+                </TouchableOpacity>
+                <View style={styles.datePickerTabs}>
+                  <TouchableOpacity 
+                    style={[styles.datePickerTab, datePickerMode === 'date' && styles.datePickerTabActive]}
+                    onPress={() => setDatePickerMode('date')}
+                  >
+                    <Text style={[styles.datePickerTabText, datePickerMode === 'date' && styles.datePickerTabTextActive]}>日期</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.datePickerTab, datePickerMode === 'time' && styles.datePickerTabActive]}
+                    onPress={() => setDatePickerMode('time')}
+                  >
+                    <Text style={[styles.datePickerTabText, datePickerMode === 'time' && styles.datePickerTabTextActive]}>时间</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity 
+                  onPress={() => {
+                    if (selectedDate) handleDateConfirm(selectedDate);
+                  }}
+                >
+                  <Text style={styles.datePickerConfirmText}>确定</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={selectedDate || new Date()}
+                mode={datePickerMode}
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) {
+                    const newDate = new Date(selectedDate || new Date());
+                    if (datePickerMode === 'date') {
+                      newDate.setFullYear(date.getFullYear());
+                      newDate.setMonth(date.getMonth());
+                      newDate.setDate(date.getDate());
+                    } else {
+                      newDate.setHours(date.getHours());
+                      newDate.setMinutes(date.getMinutes());
+                    }
+                    setSelectedDate(newDate);
+                  }
+                }}
+                minimumDate={getMinDate()}
+                maximumDate={getMaxDate()}
+                locale="zh_CN"
+                textColor="black"
+                style={styles.datePicker}
+              />
+            </View>
+          </View>
+        </Modal>
+      );
+    }
+
+    // Android 保持不变
+    return showDatePicker && (
+      <DateTimePicker
+        value={selectedDate || new Date()}
+        mode="datetime"
+        is24Hour={true}
+        display="default"
+        onChange={(event, date) => {
+          setShowDatePicker(false);
+          if (date && event.type !== 'dismissed') {
+            handleDateConfirm(date);
+          }
+        }}
+        minimumDate={getMinDate()}
+        maximumDate={getMaxDate()}
+      />
+    );
   };
 
   return (
@@ -309,7 +600,6 @@ export const PublishScreen: React.FC = () => {
             <TouchableOpacity
               style={[
                 styles.publishButton,
-                !user.isVerified && styles.publishButtonUnverified
               ]}
               onPress={handleSubmit}
             >
@@ -351,7 +641,23 @@ export const PublishScreen: React.FC = () => {
               )}
             </TouchableOpacity>
           </View>
-
+          <View style={styles.formSection}>
+            <Text style={styles.label}>学校信息</Text>
+            <TouchableOpacity
+              style={styles.input}
+              onPress={() => setShowSchoolPicker(true)}
+            >
+              <View style={styles.inputContent}>
+                <Text style={[
+                  styles.inputText,
+                  !selectedSchool && styles.placeholderText
+                ]}>
+                  {selectedSchool?.name || '选择学校 *'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#666" />
+              </View>
+            </TouchableOpacity>
+          </View>
           <View style={styles.formItem}>
             <Text style={styles.label}>活动标题</Text>
             <TextInput
@@ -364,12 +670,57 @@ export const PublishScreen: React.FC = () => {
           </View>
 
           <View style={styles.formItem}>
-            <Text style={styles.label}>选择活动时间</Text>
-            <TouchableOpacity onPress={() => setShowDatePicker(true)} style={styles.datePicker}>
-              <Text style={styles.dateText}>
-                {form.date ? dayjs(form.date).format('YYYY-MM-DD HH:mm') : '请选择时间'}
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.label}>活动时间</Text>
+            <View style={styles.timePickerGroup}>
+              <Text style={styles.timePickerLabel}>开始时间</Text>
+              <TouchableOpacity 
+                style={styles.pickerValue}
+                onPress={() => handleShowDatePicker('startTime')}
+              >
+                <Text style={styles.valueText}>
+                  {form.startTime ? dayjs(form.startTime).format('YYYY-MM-DD HH:mm') : '请选择活动开始时间'}
+                </Text>
+                <Ionicons name="chevron-forward" size={20} color="#666" />
+              </TouchableOpacity>
+              
+              <Text style={styles.timePickerLabel}>结束时间</Text>
+              <TouchableOpacity 
+                style={styles.pickerValue}
+                onPress={() => handleShowDatePicker('endTime')}
+              >
+                <Text style={styles.valueText}>
+                  {form.endTime ? dayjs(form.endTime).format('YYYY-MM-DD HH:mm') : '请选择活动结束时间'}
+                </Text>
+                <Ionicons name="chevron-forward" size={20} color="#666" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.formItem}>
+            <Text style={styles.label}>报名时间</Text>
+            <View style={styles.timePickerGroup}>
+              <Text style={styles.timePickerLabel}>开始报名</Text>
+              <TouchableOpacity 
+                style={styles.pickerValue}
+                onPress={() => handleShowDatePicker('signUpStartTime')}
+              >
+                <Text style={styles.valueText}>
+                  {form.signUpStartTime ? dayjs(form.signUpStartTime).format('YYYY-MM-DD HH:mm') : '请选择报名开始时间'}
+                </Text>
+                <Ionicons name="chevron-forward" size={20} color="#666" />
+              </TouchableOpacity>
+              
+              <Text style={styles.timePickerLabel}>结束报名</Text>
+              <TouchableOpacity 
+                style={styles.pickerValue}
+                onPress={() => handleShowDatePicker('signUpEndTime')}
+              >
+                <Text style={styles.valueText}>
+                  {form.signUpEndTime ? dayjs(form.signUpEndTime).format('YYYY-MM-DD HH:mm') : '请选择报名结束时间'}
+                </Text>
+                <Ionicons name="chevron-forward" size={20} color="#666" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.formItem}>
@@ -505,13 +856,9 @@ export const PublishScreen: React.FC = () => {
           </Modal>
         </ScrollView>
 
-        <DateTimePickerModal
-          isVisible={showDatePicker}
-          mode="datetime"
-          onConfirm={handleDateConfirm}
-          onCancel={() => setShowDatePicker(false)}
-          minimumDate={new Date()}
-        />
+        {renderDatePicker()}
+
+        {renderSchoolPicker()}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -521,6 +868,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+    paddingBottom: Platform.OS === 'ios' ? 85 : 65,  // 给页面内容添加底部间距，避免被导航栏遮挡
   },
   header: {
     flexDirection: 'row',
@@ -627,10 +975,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderColor: '#E0E0E0',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#fff',
+    marginBottom: 8,
   },
   valueText: {
+    flex: 1,
     fontSize: 15,
     color: '#333',
+    marginRight: 8,
   },
   noticeItem: {
     flexDirection: 'row',
@@ -804,15 +1160,140 @@ const styles = StyleSheet.create({
   selectedTagText: {
     color: '#fff',
   },
-  datePicker: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 10,
-    marginVertical: 10,
+  datePickerModal: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
-  dateText: {
+  datePickerContainer: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 0,
+  },
+  datePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  datePickerTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#333',
+  },
+  datePickerCancelText: {
+    fontSize: 15,
+    color: '#666',
+  },
+  datePickerConfirmText: {
+    fontSize: 15,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  datePicker: {
+    height: 200,
+    backgroundColor: 'white',
+  },
+  formSection: {
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e0e0e0',
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 12,
+  },
+  input: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  inputContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  inputText: {
     fontSize: 16,
     color: '#333',
+  },
+  placeholderText: {
+    color: '#999',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  schoolItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E0E0E0',
+  },
+  schoolItemText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  timePickerGroup: {
+    marginTop: 8,
+  },
+  timePickerLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  datePickerTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 2,
+  },
+  datePickerTab: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  datePickerTabActive: {
+    backgroundColor: '#fff',
+  },
+  datePickerTabText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  datePickerTabTextActive: {
+    color: '#007AFF',
+    fontWeight: '600',
   },
 });
 

@@ -5,6 +5,7 @@ import { ResponseUserDetails, User } from "./type";
 
 enum API {
   USERS_DETAILS = "users/details",
+  USER_PROFILE = "users/profile",
 }
 // 关注/取消关注用户
 
@@ -17,29 +18,10 @@ export const toggleUserFollow = async (userId: string): Promise<ResponseBase> =>
   };
 };
 
-// 获取用户活动列表
-export const getUserActivities = async (
-  userId: string,
-  type: 'participated' | 'published',
-  page: number = 1
-): Promise<ResponseBase> => {
-  // 模拟API调用
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  return {
-    code: 0,
-    message: 'success',
-    data: {
-      activities: [
-        // ... 活动数据
-      ],
-      total: 10,
-    },
-  };
-};
 
 
-export const getUserDetails = async (id?: string): Promise<ResponseBase> => 
-  http.get<any, ResponseUserDetails>(API.USERS_DETAILS, {params:id});
+export const getUserDetails = (params: { id: string }) => 
+  http.get<any, ResponseUserDetails>(API.USERS_DETAILS, { params });
 
 export const updateUserDetails = (params: User) =>
   http.patch<any, ResponseBase>(
@@ -47,3 +29,6 @@ export const updateUserDetails = (params: User) =>
    params,
     { withCredentials: true }
   );
+
+export const updateUserProfile = (params: User) =>
+  http.put<any, ResponseBase>(API.USER_PROFILE, params);

@@ -1,6 +1,6 @@
 import http from "..";
 import { ResponseBase } from "../type";
-import { ResponseCheckSystemInit, ResponseLogin } from "./type";
+import { RegisterParams, ResponseCheckSystemInit, ResponseLogin } from "./type";
 
 enum API {
   USERS_CHECK = "users/check",
@@ -8,25 +8,14 @@ enum API {
   USERS_LOGIN = "users/login",
   USERS_LOGOUT = "users/logout",
   USERS_AUTH = "users/auth",
-  USERS_DETAILS = "users/details",
   USERS_EMAIL = "users/email",
 }
 
 export const checkSystemInit = () =>
   http.get<any, ResponseCheckSystemInit>(API.USERS_CHECK, {});
 
-export const register = (
-  username: string,
-  email: string,
-  password: string,
-  auth_code: string
-) =>
-  http.post<any, ResponseBase>(API.USERS_REGISTER, {
-    username,
-    email,
-    password,
-    auth_code,
-  });
+export const register = (params: RegisterParams) =>
+  http.post<any, ResponseBase>(API.USERS_REGISTER, params);
 
 export const getVerificationCode = (email: string) =>
   http.get<any, ResponseBase>(API.USERS_EMAIL, {

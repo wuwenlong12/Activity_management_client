@@ -83,7 +83,9 @@ export const ParticipantsScreen: React.FC = () => {
   const renderItem = ({ item }: { item: Participant }) => (
     <TouchableOpacity 
       style={styles.participantItem}
-      onPress={() => navigation.navigate('UserProfile', { userId: item.id })}
+      onPress={() => navigation.navigate('UserProfile', { 
+        userId: item._id.toString()
+      })}
     >
       <Image source={item.avatar} style={styles.avatar} />
       <View style={styles.info}>

@@ -7,7 +7,7 @@ console.log(process.env.EXPO_PUBLIC_API_URL);
 
 // 创建 axios 实例
 const http = axios.create({
-  baseURL: 'http://192.168.1.3:3000/api', // 使用 Expo 的环境变量
+  baseURL: 'http://192.168.1.7:3000/api', // 使用 Expo 的环境变量
   timeout: 3000,
   headers: { "Content-Type": "application/json" },
 });

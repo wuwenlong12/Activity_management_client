@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   SafeAreaView,
   Alert,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppDispatch, useAppSelector } from '../store';
@@ -17,6 +18,11 @@ import { logout } from '../store/slices/authSlice';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { getUnreadNotificationCount } from '../api/notification';
+import { getUserStats } from '../api/info';
+import dayjs from 'dayjs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { disconnectSocket } from '../store/slices/socketSlice';
 
 type NavigationProp = StackNavigationProp<RootStackParamList, 'Profile'>;
 
@@ -27,126 +33,359 @@ const MenuItem = ({ icon, title, onPress, showBadge = false }) => (
     </View>
     <Text style={styles.menuTitle}>{title}</Text>
     <View style={styles.menuRight}>
-      {showBadge && <View style={styles.badge} />}
+      {showBadge && (
+        <View style={styles.badgeContainer}>
+          <Text style={styles.badgeText}>{unreadCount}</Text>
+        </View>
+      )}
       <Ionicons name="chevron-forward" size={20} color="#CCC" />
     </View>
   </TouchableOpacity>
 );
 
+// 计算资料完整度
+const getProfileCompleteness = (user: any) => {
+  const fields = ['school', 'className', 'studentId', 'phone', 'email', 'wx', 'bio'];
+  const completedFields = fields.filter(field => user?.[field]);
+  return Math.floor((completedFields.length / fields.length) * 100);
+};
+
 export const ProfileScreen: React.FC = () => {
   const { user } = useAppSelector((state: RootState) => state.auth);
   const dispatch = useAppDispatch();
   const navigation = useNavigation<NavigationProp>();
-  const handleLogout = async() => {
-    // 处理退出登录
-  const res =await logoutApi()
-  if(res.code === 0){
-    dispatch(logout())
-    Alert.alert('退出登录成功')
-  }else{
-    Alert.alert('退出登录失败')
-  }
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [stats, setStats] = useState({
+    publishedCount: 0,
+    participatedCount: 0,
+    favoriteCount: 0,
+  });
+  const [statsLoading, setStatsLoading] = useState(true);
+  const insets = useSafeAreaInsets();
+  
+  // 获取未读消息数量
+  const fetchUnreadCount = async () => {
+    try {
+      const res = await getUnreadNotificationCount();
+      if (res.code === 0) {
+        setUnreadCount(res.data.count);
+      }
+    } catch (error) {
+      console.error('获取未读消息数量失败:', error);
+    }
   };
 
+  // 获取用户统计数据
+  const fetchUserStats = async () => {
+    try {
+      const res = await getUserStats();
+      if (res.code === 0) {
+        setStats(res.data);
+      }
+    } catch (error) {
+      console.error('获取用户统计数据失败:', error);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUnreadCount();
+    fetchUserStats();
+  }, []);
+
+  const handleLogout = async() => {
+    try {
+      const res = await logoutApi();
+      if (res.code === 0) {
+        // 先断开 socket 连接
+        disconnectSocket();
+        // 再清除用户状态
+        dispatch(logout());
+        Alert.alert('退出登录成功');
+      } else {
+        Alert.alert('退出登录失败');
+      }
+    } catch (error) {
+      console.error('退出登录失败:', error);
+      Alert.alert('退出登录失败');
+    }
+  };
+
+  const completeness = user ? getProfileCompleteness(user) : 0;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <StatusBar style="dark" backgroundColor="#fff" />
       <ScrollView>
-        {/* 用户信息卡片 */}
-        <View style={styles.userCard}>
-          <Image
-            source={user?.imgurl ? { uri: user.imgurl } : require('../../assets/logo.jpg')}
-            style={styles.avatar}
-          />
+        {/* 个性化头部 */}
+        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('UserProfile', { 
+              userId: user?._id 
+            })}
+          >
+            <Image
+              source={user?.avatar ? { uri: user.avatar } : require('../../assets/logo.jpg')}
+              style={styles.avatar}
+            />
+          </TouchableOpacity>
           <View style={styles.userInfo}>
             <View style={styles.nameRow}>
               <Text style={styles.username}>{user?.username || '未登录'}</Text>
               {user?.verified && (
-                <Ionicons name="checkmark-circle" size={16} color="#007AFF" />
+                <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
               )}
             </View>
-            <Text style={styles.userId}>ID: {user?._id || '--'}</Text>
+            <Text style={styles.bio}>{user?.bio || '在校园相遇，让生活更精彩'}</Text>
           </View>
           <TouchableOpacity 
             style={styles.editButton}
             onPress={() => navigation.navigate('EditProfile')}
           >
-            <Text style={styles.editButtonText}>编辑资料</Text>
+            <Ionicons name="pencil" size={16} color="#fff" />
           </TouchableOpacity>
         </View>
 
-        {/* 数据统计 */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statsItem}>
-            <Text style={styles.statsNumber}>0</Text>
-            <Text style={styles.statsLabel}>已参与</Text>
+        {/* 活动数据卡片 */}
+        <View style={styles.statsCard}>
+          <TouchableOpacity 
+            style={styles.statsItem}
+            onPress={() => navigation.navigate('MyActivities', { tab: 'joined' })}
+          >
+            <View style={styles.statsIcon}>
+              <View style={[styles.statsIconInner, { backgroundColor: '#FF9500' }]}>
+                <Ionicons name="people" size={16} color="#fff" />
+              </View>
+            </View>
+            <Text style={styles.statsNumber}>
+              {statsLoading ? '-' : stats.participatedCount}
+            </Text>
+            <Text style={styles.statsLabel}>参与活动</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.statsItem}
+            onPress={() => navigation.navigate('MyActivities', { tab: 'published' })}
+          >
+            <View style={styles.statsIcon}>
+              <View style={[styles.statsIconInner, { backgroundColor: '#34C759' }]}>
+                <Ionicons name="megaphone" size={16} color="#fff" />
+              </View>
+            </View>
+            <Text style={styles.statsNumber}>
+              {statsLoading ? '-' : stats.publishedCount}
+            </Text>
+            <Text style={styles.statsLabel}>发布活动</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.statsItem}
+            onPress={() => navigation.navigate('FavoriteList')}
+          >
+            <View style={styles.statsIcon}>
+              <View style={[styles.statsIconInner, { backgroundColor: '#FF2D55' }]}>
+                <Ionicons name="heart" size={16} color="#fff" />
+              </View>
+            </View>
+            <Text style={styles.statsNumber}>
+              {statsLoading ? '-' : stats.favoriteCount}
+            </Text>
+            <Text style={styles.statsLabel}>收藏活动</Text>
+          </TouchableOpacity>
+        </View>
+        {/* 个人信息卡片 */}
+        <View style={styles.infoCard}>
+          <Text style={styles.cardTitle}>个人信息</Text>
+          
+          <View style={styles.infoRow}>
+            <View style={styles.infoItem}>
+              <Ionicons name="school-outline" size={20} color="#666" />
+              <Text style={styles.infoLabel}>学校</Text>
+              <Text style={styles.infoValue}>{user?.school?.name || '未填写'}</Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Ionicons name="book-outline" size={20} color="#666" />
+              <Text style={styles.infoLabel}>班级</Text>
+              <Text style={styles.infoValue}>{user?.className || '未填写'}</Text>
+            </View>
           </View>
-          <View style={styles.statsItem}>
-            <Text style={styles.statsNumber}>0</Text>
-            <Text style={styles.statsLabel}>已发布</Text>
+
+          <View style={styles.infoRow}>
+            <View style={styles.infoItem}>
+              <Ionicons name="card-outline" size={20} color="#666" />
+              <Text style={styles.infoLabel}>学号</Text>
+              <Text style={styles.infoValue}>{user?.studentId || '未填写'}</Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Ionicons name="time-outline" size={20} color="#666" />
+              <Text style={styles.infoLabel}>加入时间</Text>
+              <Text style={styles.infoValue}>
+                {user?.createdAt ? dayjs(user.createdAt).format('YYYY-MM-DD') : '未知'}
+              </Text>
+            </View>
           </View>
-          <View style={styles.statsItem}>
-            <Text style={styles.statsNumber}>0</Text>
-            <Text style={styles.statsLabel}>收藏</Text>
+
+          <View style={styles.contactRow}>
+            {user?.phone && (
+              <TouchableOpacity style={styles.contactItem}>
+                <Ionicons name="call" size={20} color="#007AFF" />
+              </TouchableOpacity>
+            )}
+            {user?.email && (
+              <TouchableOpacity style={styles.contactItem}>
+                <Ionicons name="mail" size={20} color="#FF9500" />
+              </TouchableOpacity>
+            )}
+            {user?.wx && (
+              <TouchableOpacity style={styles.contactItem}>
+                <Ionicons name="logo-wechat" size={20} color="#34C759" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
-        {/* 功能菜单 */}
-        <View style={styles.menuSection}>
-          <MenuItem
-            icon="calendar-outline"
-            title="我的活动"
-            onPress={() => {navigation.navigate('MyActivities');}}
-          />
-          <MenuItem
-            icon="heart-outline"
-            title="我的收藏"
-            onPress={() => {}}
-          />
-          <MenuItem
-            icon="notifications-outline"
-            title="消息通知"
-            onPress={() => {}}
-            showBadge
-          />
-        </View>
+        {/* 完善信息提示卡片 */}
+        {completeness < 100 && (
+          <View style={styles.tipCard}>
+            <View style={styles.tipHeader}>
+              <View style={styles.tipIconContainer}>
+                <Ionicons name="bulb" size={20} color="#FF9500" />
+              </View>
+              <Text style={styles.tipTitle}>温馨提示</Text>
+            </View>
+            
+            <View style={styles.progressContainer}>
+              <View style={styles.progressBar}>
+                <View 
+                  style={[
+                    styles.progressFill, 
+                    { width: `${completeness}%` }
+                  ]} 
+                />
+              </View>
+              <Text style={styles.progressText}>{completeness}%</Text>
+            </View>
 
-        <View style={styles.menuSection}>
-          <MenuItem
-            icon="settings-outline"
-            title="设置"
-            onPress={() => {}}
-          />
-          <MenuItem
-            icon="help-circle-outline"
-            title="帮助与反馈"
-            onPress={() => {}}
-          />
+            <Text style={styles.tipText}>
+              完善的个人信息可以：
+            </Text>
+            <View style={styles.benefitsList}>
+              <View style={styles.benefitItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                <Text style={styles.benefitText}>提高活动报名通过率</Text>
+              </View>
+              <View style={styles.benefitItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                <Text style={styles.benefitText}>获得更好的社交体验</Text>
+              </View>
+              <View style={styles.benefitItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#34C759" />
+                <Text style={styles.benefitText}>接收重要活动通知</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.completeButton}
+              onPress={() => navigation.navigate('EditProfile')}
+            >
+              <Text style={styles.completeButtonText}>立即完善</Text>
+              <Ionicons name="arrow-forward" size={16} color="#007AFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* 功能卡片 */}
+        <View style={styles.menuContainer}>
+          <Text style={styles.menuTitle}>功能中心</Text>
+          <View style={styles.menuGrid}>
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('MyActivities')}
+            >
+              <View style={[styles.menuIcon, { backgroundColor: '#007AFF' }]}>
+                <Ionicons name="calendar" size={24} color="#fff" />
+              </View>
+              <Text style={styles.menuText}>我的活动</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('FavoriteList')}
+            >
+              <View style={[styles.menuIcon, { backgroundColor: '#FF2D55' }]}>
+                <Ionicons name="heart" size={24} color="#fff" />
+              </View>
+              <Text style={styles.menuText}>我的收藏</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('Notification')}
+            >
+              <View style={[styles.menuIcon, { backgroundColor: '#5856D6' }]}>
+                <Ionicons name="notifications" size={24} color="#fff" />
+                {unreadCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{unreadCount}</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.menuText}>消息通知</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('Settings')}
+            >
+              <View style={[styles.menuIcon, { backgroundColor: '#8E8E93' }]}>
+                <Ionicons name="settings" size={24} color="#fff" />
+              </View>
+              <Text style={styles.menuText}>设置</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* 退出登录按钮 */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <TouchableOpacity 
+          style={styles.logoutButton}
+          onPress={handleLogout}
+        >
           <Text style={styles.logoutText}>退出登录</Text>
         </TouchableOpacity>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#F2F2F7',
   },
-  userCard: {
+  header: {
     backgroundColor: '#fff',
     padding: 20,
     flexDirection: 'row',
     alignItems: 'center',
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   avatar: {
     width: 80,
     height: 80,
     borderRadius: 40,
+    borderWidth: 3,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   userInfo: {
     flex: 1,
@@ -158,87 +397,303 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   username: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000',
   },
-  userId: {
+  bio: {
     fontSize: 14,
     color: '#666',
     marginTop: 4,
   },
   editButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#f0f0f0',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  editButtonText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  statsContainer: {
+  statsCard: {
     flexDirection: 'row',
     backgroundColor: '#fff',
-    paddingVertical: 16,
-    marginTop: 12,
+    margin: 16,
+    marginTop: 24,
+    padding: 16,
+    paddingTop: 24,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   statsItem: {
     flex: 1,
     alignItems: 'center',
+    position: 'relative',
+    paddingHorizontal: 8,
+    paddingTop: 24,
   },
   statsNumber: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000',
   },
   statsLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#666',
     marginTop: 4,
   },
-  menuSection: {
+  statsIcon: {
+    position: 'absolute',
+    top: -16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#fff',
-    marginTop: 12,
-  },
-  menuItem: {
-    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  statsIconInner: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuContainer: {
+    margin: 16,
+    backgroundColor: '#fff',
+    borderRadius: 16,
     padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#f0f0f0',
-  },
-  menuIcon: {
-    width: 24,
-    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   menuTitle: {
-    flex: 1,
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 12,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 16,
   },
-  menuRight: {
+  menuGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  menuItem: {
+    width: '48%',
+    aspectRatio: 1,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  menuText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
   },
   badge: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    position: 'absolute',
+    top: -4,
+    right: -4,
     backgroundColor: '#FF3B30',
-    marginRight: 8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   logoutButton: {
-    margin: 24,
+    margin: 16,
     padding: 16,
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 16,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   logoutText: {
     fontSize: 16,
     color: '#FF3B30',
+    fontWeight: '600',
+  },
+  infoCard: {
+    margin: 16,
+    padding: 16,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 16,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  infoItem: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    marginHorizontal: 4,
+  },
+  infoLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+  infoValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  contactRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 24,
+    marginTop: 8,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E5E5',
+  },
+  contactItem: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F8F8F8',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tipCard: {
+    margin: 16,
+    marginTop: 0,
+    padding: 16,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  tipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  tipIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFF5E6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  tipTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  progressBar: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#F2F2F7',
+    borderRadius: 3,
+    marginRight: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#34C759',
+    borderRadius: 3,
+  },
+  progressText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#34C759',
+    width: 40,
+  },
+  tipText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  benefitsList: {
+    marginBottom: 16,
+  },
+  benefitItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 4,
+  },
+  benefitText: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 8,
+  },
+  completeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 8,
+  },
+  completeButtonText: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
+    marginRight: 4,
   },
 });
 
